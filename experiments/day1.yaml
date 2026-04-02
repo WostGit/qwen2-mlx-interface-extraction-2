@@ -1,0 +1,8 @@
+budgets: [64, 128, 256, 512, 1024]
+seeds: [0, 1, 2]
+qwen_model: Qwen/Qwen2-0.5B-Instruct
+qwen_prompt_limit: 16
+default_topk: 3
+fixed_topk_budget: 512
+fixed_topk_interfaces: [argmax, top2, top3, top5, probs]
+output_dir: results/day1
