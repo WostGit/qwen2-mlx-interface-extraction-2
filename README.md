@@ -1,48 +1,62 @@
 # qwen2-mlx-interface-extraction
 
-Black-box extraction experiments designed to run on **GitHub Actions macOS runners** using **Python + MLX**.
+Research repo for black-box model extraction experiments on GitHub Actions macOS runners using Python + MLX.
 
-## Experiment families
+## Scope
 
-1. **Toy extraction baseline** (`source=toy`)
-2. **Tiny-LLM next-token imitation** with `Qwen/Qwen2-0.5B` via `mlx-lm` (`source=qwen2-0.5b`)
+This repo implements two experiment families:
 
-Victim API interfaces compared:
+1. **Toy extraction baseline** (`source=toy`).
+2. **Tiny-LLM next-token imitation** with **Qwen2-0.5B via MLX** (`source=qwen2-0.5b`).
+
+Victim API interfaces:
 - `argmax`
-- `topk` (Day 1 uses `top2`, and fixed-budget sweep includes `top2/top3/top5`)
+- `topk` (default `top5` in budget sweeps)
 - `probs`
+
+Additional fixed-budget Qwen top-k sweep:
+- `argmax`, `top2`, `top3`, `top5`, `probs`
+
+## Layout
+
+- `models/` interface compression utilities.
+- `attacks/` extraction learner.
+- `experiments/` toy and Qwen experiments.
+- `scripts/` plotting helpers.
+- `results/` CSV outputs and plots.
+- `.github/workflows/` CI definitions.
 
 ## Minimal dependencies
 
-Only these packages are used:
-- numpy
-- pandas
-- matplotlib
-- pyyaml
-- mlx
-- mlx-lm
-- huggingface_hub
+Pinned by policy to:
+- `numpy`
+- `pandas`
+- `matplotlib`
+- `pyyaml`
+- `mlx`
+- `mlx-lm`
+- `huggingface_hub`
 
-## Repo layout
-
-- `models/`
-- `attacks/`
-- `experiments/`
-- `scripts/`
-- `results/`
-- `.github/workflows/`
-
-## Run all experiments
+## Run locally
 
 ```bash
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 python run_all.py
 ```
 
-Outputs in `results/`:
-- `day1_budget_sweep.csv`
-- `qwen_fixed_budget_topk_sweep.csv`
-- `qwen_multiseed_raw.csv`
-- `qwen_multiseed_summary.csv`
-- `agreement_vs_budget.png`
-- `kl_vs_budget.png`
+Outputs:
+- `results/budget_sweep_raw.csv`
+- `results/budget_sweep_summary.csv`
+- `results/qwen_topk_sweep_raw.csv`
+- `results/qwen_topk_sweep_summary.csv`
+- `results/multi_seed_mean_std.csv`
+- `results/agreement_vs_budget.png`
+- `results/kl_vs_budget.png`
+
+## Day 1 defaults
+
+- Budget sweep: `64, 128, 256, 512, 1024`
+- Seeds: `0, 1, 2`
+- Logged columns: `source, interface, budget, seed, agreement, kl_divergence`
+
+The CI uploads all CSVs and plots as workflow artifacts.

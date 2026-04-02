@@ -3,13 +3,12 @@ name: day1-mlx-extraction
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main, work ]
 
 jobs:
   run-day1:
     runs-on: macos-14
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -22,28 +21,28 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements.txt
 
-      - name: Cache Hugging Face and MLX artifacts
+      - name: Cache MLX / HF model downloads
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/huggingface
             ~/.cache/mlx
-          key: ${{ runner.os }}-hf-mlx-${{ hashFiles('requirements.txt', 'run_all.py', 'experiments/*.py', 'models/*.py') }}
+          key: ${{ runner.os }}-mlx-hf-${{ hashFiles('requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-hf-mlx-
+            ${{ runner.os }}-mlx-hf-
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          pip install -r requirements.txt
 
       - name: Run Day 1 experiments
         env:
-          HF_HOME: ~/.cache/huggingface
+          PYTHONHASHSEED: '0'
         run: |
           python run_all.py
 
-      - name: Upload result artifacts
+      - name: Upload results artifacts
         uses: actions/upload-artifact@v4
         with:
           name: day1-results

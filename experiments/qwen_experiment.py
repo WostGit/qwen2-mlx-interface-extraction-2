@@ -1,66 +1,99 @@
 from __future__ import annotations
 
-from typing import Iterable, List
+from dataclasses import dataclass
 
+import mlx.core as mx
 import numpy as np
+import pandas as pd
+from mlx_lm import load
 
-from attacks.extractors import BucketedExtractor, evaluate
-from experiments.common import parse_interface, set_seed
-from models.qwen_victim import QwenVictim
-
-PROMPTS = [
-    "The capital of France is",
-    "A quick brown fox jumps",
-    "Machine learning is",
-    "In one sentence, explain gravity:",
-    "The most important thing about testing code is",
-    "Python developers often use",
-    "The weather today feels",
-    "To make tea, first",
-    "Open source software enables",
-    "My favorite algorithm for sorting is",
-]
+from experiments.common import evaluate_extractor, train_extractor
+from models.interfaces import parse_interface
 
 
-def run_qwen(
-    budgets: Iterable[int],
-    interfaces: Iterable[str],
-    seeds: Iterable[int],
-    eval_samples: int = 64,
-    model_id: str = "Qwen/Qwen2-0.5B",
-    vocab_cap: int = 32768,
-) -> List[dict]:
-    rows: List[dict] = []
-    victim = QwenVictim(model_id=model_id, vocab_cap=vocab_cap)
+def _build_prompt_pool() -> list[str]:
+    subjects = ["physics", "math", "biology", "history", "economics", "music", "coding", "ethics"]
+    styles = ["one-word", "short", "concise", "direct"]
+    pool = []
+    for s in subjects:
+        for st in styles:
+            pool.append(f"Topic: {s}. Provide a {st} continuation:")
+            pool.append(f"In {s}, the key idea is")
+            pool.append(f"Question about {s}: the answer starts with")
+    return pool
 
-    for seed in seeds:
-        set_seed(seed)
-        rng = np.random.default_rng(seed + 101)
-        eval_prompts = [PROMPTS[i] for i in rng.integers(0, len(PROMPTS), size=eval_samples)]
-        eval_items = [
-            (victim.bucket_from_query(p), victim.probs(p))
-            for p in eval_prompts
-        ]
 
-        for interface in interfaces:
-            _, k = parse_interface(interface)
-            for budget in budgets:
-                extractor = BucketedExtractor(vocab_size=vocab_cap)
-                query_prompts = [PROMPTS[i] for i in rng.integers(0, len(PROMPTS), size=budget)]
-                for prompt in query_prompts:
-                    bucket = victim.bucket_from_query(prompt)
-                    obs = victim.query(prompt, interface=interface, topk=k)
-                    extractor.update(bucket, obs)
+@dataclass
+class QwenVictim:
+    model_name: str = "mlx-community/Qwen2-0.5B-Instruct-4bit"
 
-                agreement, kl = evaluate(extractor, eval_items)
+    def __post_init__(self):
+        self.model, self.tokenizer = load(self.model_name)
+        self.prompt_pool = _build_prompt_pool()
+        self.vocab_size = int(self.tokenizer.vocab_size)
+
+    def _context_id(self, prompt: str) -> int:
+        ids = self.tokenizer.encode(prompt)
+        return int(ids[-1]) if ids else 0
+
+    def sample_train_prompt(self, rng: np.random.Generator):
+        prompt = self.prompt_pool[int(rng.integers(0, len(self.prompt_pool)))]
+        return self._context_id(prompt), prompt
+
+    def sample_eval_prompt(self, rng: np.random.Generator):
+        prompt = self.prompt_pool[int(rng.integers(0, len(self.prompt_pool)))]
+        return self._context_id(prompt), prompt
+
+    def query_probs(self, prompt: str) -> np.ndarray:
+        input_ids = self.tokenizer.encode(prompt)
+        arr = mx.array([input_ids])
+        logits = self.model(arr)
+        if isinstance(logits, tuple):
+            logits = logits[0]
+        next_logits = np.array(logits[0, -1, :], dtype=np.float64)
+        probs = np.exp(next_logits - np.max(next_logits))
+        probs = probs / np.clip(probs.sum(), 1e-12, None)
+        return probs
+
+
+def run_qwen_budget_sweep(budgets, seeds, interfaces=("argmax", "topk", "probs"), model_name: str = "mlx-community/Qwen2-0.5B-Instruct-4bit"):
+    rows = []
+    victim = QwenVictim(model_name=model_name)
+    for interface_name in interfaces:
+        interface = parse_interface(interface_name)
+        for budget in budgets:
+            for seed in seeds:
+                extractor = train_extractor(victim=victim, interface=interface, budget=budget, seed=seed)
+                metrics = evaluate_extractor(victim=victim, extractor=extractor, seed=seed, eval_size=96)
                 rows.append(
                     {
                         "source": "qwen2-0.5b",
-                        "interface": interface,
+                        "interface": interface_name,
                         "budget": int(budget),
                         "seed": int(seed),
-                        "agreement": agreement,
-                        "kl_divergence": kl,
+                        "agreement": metrics.agreement,
+                        "kl_divergence": metrics.kl_divergence,
                     }
                 )
-    return rows
+    return pd.DataFrame(rows)
+
+
+def run_qwen_topk_sweep(fixed_budget: int, seeds, interfaces=("argmax", "top2", "top3", "top5", "probs"), model_name: str = "mlx-community/Qwen2-0.5B-Instruct-4bit"):
+    rows = []
+    victim = QwenVictim(model_name=model_name)
+    for interface_name in interfaces:
+        interface = parse_interface(interface_name)
+        for seed in seeds:
+            extractor = train_extractor(victim=victim, interface=interface, budget=fixed_budget, seed=seed)
+            metrics = evaluate_extractor(victim=victim, extractor=extractor, seed=seed, eval_size=96)
+            rows.append(
+                {
+                    "source": "qwen2-0.5b-topk-sweep",
+                    "interface": interface_name,
+                    "budget": int(fixed_budget),
+                    "seed": int(seed),
+                    "agreement": metrics.agreement,
+                    "kl_divergence": metrics.kl_divergence,
+                }
+            )
+    return pd.DataFrame(rows)

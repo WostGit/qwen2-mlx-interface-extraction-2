@@ -1,47 +1,49 @@
 from __future__ import annotations
 
-from typing import Iterable, List
-
 import numpy as np
+import pandas as pd
 
-from attacks.extractors import BucketedExtractor, evaluate
-from experiments.common import parse_interface, set_seed
-from models.toy_victim import ToyVictim
+from experiments.common import evaluate_extractor, train_extractor
+from models.interfaces import parse_interface
 
 
-def run_toy(
-    budgets: Iterable[int],
-    interfaces: Iterable[str],
-    seeds: Iterable[int],
-    vocab_size: int = 32,
-    eval_samples: int = 128,
-) -> List[dict]:
-    rows: List[dict] = []
-    for seed in seeds:
-        set_seed(seed)
-        victim = ToyVictim(vocab_size=vocab_size, seed=seed)
-        rng = np.random.default_rng(seed + 11)
-        eval_tokens = rng.integers(0, vocab_size, size=eval_samples)
-        eval_items = [(int(t), victim.probs(int(t))) for t in eval_tokens]
+class ToyVictim:
+    def __init__(self, vocab_size: int = 32, n_contexts: int = 16, seed: int = 7):
+        self.vocab_size = vocab_size
+        self.n_contexts = n_contexts
+        rng = np.random.default_rng(seed)
+        self.table = rng.dirichlet(np.ones(vocab_size), size=n_contexts)
 
-        for interface in interfaces:
-            _, k = parse_interface(interface)
-            for budget in budgets:
-                extractor = BucketedExtractor(vocab_size=vocab_size)
-                query_tokens = rng.integers(0, vocab_size, size=budget)
-                for token in query_tokens:
-                    obs = victim.query(int(token), interface=interface, topk=k)
-                    extractor.update(victim.bucket_from_query(int(token)), obs)
+    def sample_train_prompt(self, rng: np.random.Generator):
+        context_id = int(rng.integers(0, self.n_contexts))
+        return context_id, f"toy_context_{context_id}"
 
-                agreement, kl = evaluate(extractor, eval_items)
+    def sample_eval_prompt(self, rng: np.random.Generator):
+        context_id = int(rng.integers(0, self.n_contexts))
+        return context_id, f"toy_eval_context_{context_id}"
+
+    def query_probs(self, prompt: str) -> np.ndarray:
+        context_id = int(prompt.split("_")[-1])
+        return self.table[context_id]
+
+
+def run_toy_budget_sweep(budgets, seeds, interfaces=("argmax", "topk", "probs")) -> pd.DataFrame:
+    rows = []
+    victim = ToyVictim()
+    for interface_name in interfaces:
+        interface = parse_interface(interface_name)
+        for budget in budgets:
+            for seed in seeds:
+                extractor = train_extractor(victim=victim, interface=interface, budget=budget, seed=seed)
+                metrics = evaluate_extractor(victim=victim, extractor=extractor, seed=seed)
                 rows.append(
                     {
                         "source": "toy",
-                        "interface": interface,
+                        "interface": interface_name,
                         "budget": int(budget),
                         "seed": int(seed),
-                        "agreement": agreement,
-                        "kl_divergence": kl,
+                        "agreement": metrics.agreement,
+                        "kl_divergence": metrics.kl_divergence,
                     }
                 )
-    return rows
+    return pd.DataFrame(rows)
