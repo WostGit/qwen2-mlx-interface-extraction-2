@@ -1,14 +1,8 @@
-seed_list: [0, 1, 2]
 budgets: [64, 128, 256, 512, 1024]
-qwen:
-  model_name: mlx-community/Qwen2-0.5B-Instruct-4bit
-  context_pool_size: 64
-  eval_size: 24
-  train_topk: 3
-  fixed_budget: 512
-  topk_sweep: [2, 3, 5]
-toy:
-  vocab_size: 20
-  context_pool_size: 64
-  eval_size: 24
-  train_topk: 3
+seeds: [0, 1, 2]
+qwen_model: Qwen/Qwen2-0.5B-Instruct
+qwen_prompt_limit: 16
+default_topk: 3
+fixed_topk_budget: 512
+fixed_topk_interfaces: [argmax, top2, top3, top5, probs]
+output_dir: results/day1

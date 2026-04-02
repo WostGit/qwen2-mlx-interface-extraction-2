@@ -2,21 +2,28 @@
 
 Research repo for black-box model extraction experiments on GitHub Actions macOS runners using Python + MLX.
 
-## What this runs
-- **Toy extraction baseline**
-- **Tiny-LLM next-token imitation** with **Qwen2-0.5B (MLX)**
+## Layout
+- `models/`: victim model interfaces (toy and Qwen2-0.5B via MLX)
+- `attacks/`: extraction estimators and metrics
+- `experiments/`: configs and experiment orchestration
+- `scripts/`: plotting helpers
+- `results/`: generated CSVs and plots
+- `.github/workflows/`: CI workflows
 
-It compares victim API interfaces:
-- `argmax`
-- `topk` (e.g. top-2/top-3/top-5)
-- `probs` (full probabilities)
-
-## Quickstart
+## Install
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+```
+
+## Run
+```bash
 python run_all.py --config experiments/day1.yaml
 ```
 
-Outputs are written to `results/` as CSV summaries and plots.
+Outputs include:
+- `budget_sweep_raw.csv`
+- `budget_sweep_summary.csv`
+- `qwen_topk_raw.csv`
+- `qwen_topk_summary.csv`
+- `agreement_vs_budget.png`
+- `kl_vs_budget.png`

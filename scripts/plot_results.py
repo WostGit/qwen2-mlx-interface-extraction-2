@@ -6,37 +6,31 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-def make_plots(summary_csv: str, output_dir: str) -> None:
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    df = pd.read_csv(summary_csv)
+def _plot(df: pd.DataFrame, metric: str, out_path: Path) -> None:
+    plt.figure(figsize=(8, 5))
+    grouped = (
+        df.groupby(["source", "interface", "budget"], as_index=False)[metric]
+        .agg(["mean", "std"])
+        .reset_index()
+    )
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for (source, interface), part in df.groupby(["source", "interface"]):
-        part = part.sort_values("budget")
-        ax.plot(part["budget"], part["agreement_mean"], marker="o", label=f"{source}:{interface}")
-    ax.set_xscale("log", base=2)
-    ax.set_xlabel("Query budget")
-    ax.set_ylabel("Top-1 agreement")
-    ax.set_title("Agreement vs Budget")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    fig.savefig(out / "agreement_vs_budget.png", dpi=160)
-    plt.close(fig)
+    for (source, interface), sub in grouped.groupby(["source", "interface"]):
+        sub = sub.sort_values("budget")
+        label = f"{source}:{interface}"
+        plt.plot(sub["budget"], sub["mean"], marker="o", label=label)
+        plt.fill_between(sub["budget"], sub["mean"] - sub["std"], sub["mean"] + sub["std"], alpha=0.15)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for (source, interface), part in df.groupby(["source", "interface"]):
-        part = part.sort_values("budget")
-        ax.plot(part["budget"], part["kl_mean"], marker="o", label=f"{source}:{interface}")
-    ax.set_xscale("log", base=2)
-    ax.set_xlabel("Query budget")
-    ax.set_ylabel("KL divergence")
-    ax.set_title("KL vs Budget")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    fig.savefig(out / "kl_vs_budget.png", dpi=160)
-    plt.close(fig)
+    plt.xscale("log", base=2)
+    plt.xlabel("Query budget")
+    plt.ylabel(metric)
+    plt.title(f"{metric} vs budget")
+    plt.legend(loc="best", fontsize=8)
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path)
+    plt.close()
 
 
-if __name__ == "__main__":
-    make_plots("results/results_summary.csv", "results")
+def make_plots(budget_df: pd.DataFrame, output_dir: Path) -> None:
+    _plot(budget_df, metric="agreement", out_path=output_dir / "agreement_vs_budget.png")
+    _plot(budget_df, metric="kl_divergence", out_path=output_dir / "kl_vs_budget.png")
