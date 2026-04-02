@@ -1,63 +1,90 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict
 
 import numpy as np
 
-
-@dataclass
-class InterfaceObservation:
-    interface: str
-    argmax_token: int | None = None
-    topk_tokens: np.ndarray | None = None
-    topk_probs: np.ndarray | None = None
-    probs: np.ndarray | None = None
+from models.victim_api import VictimResponse
 
 
 @dataclass
-class BucketedExtractor:
-    """Simple frequency-based extractor keyed by context buckets."""
+class ContextEstimate:
+    seen: int = 0
+    winner: int | None = None
+    token_mass: Dict[int, float] = field(default_factory=dict)
+    probs_mean: np.ndarray | None = None
 
-    vocab_size: int
-    smoothing: float = 1e-5
-    table: Dict[int, np.ndarray] = field(default_factory=dict)
 
-    def _row(self, bucket: int) -> np.ndarray:
-        if bucket not in self.table:
-            self.table[bucket] = np.full(self.vocab_size, self.smoothing, dtype=np.float64)
-        return self.table[bucket]
+class StudentExtractor:
+    def __init__(self, interface: str, vocab_size: int, smoothing: float = 1e-6) -> None:
+        self.interface = interface
+        self.vocab_size = vocab_size
+        self.smoothing = smoothing
+        self.ctx: Dict[int, ContextEstimate] = {}
+        self.global_mass = np.ones(vocab_size, dtype=np.float64)
 
-    def update(self, bucket: int, obs: InterfaceObservation) -> None:
-        row = self._row(bucket)
-        if obs.interface == "argmax":
-            row[obs.argmax_token] += 1.0
-        elif obs.interface.startswith("top"):
-            row[obs.topk_tokens] += obs.topk_probs
-        elif obs.interface == "probs":
-            row += obs.probs
+    def _get(self, context_id: int) -> ContextEstimate:
+        if context_id not in self.ctx:
+            self.ctx[context_id] = ContextEstimate()
+        return self.ctx[context_id]
+
+    def observe(self, context_id: int, response: VictimResponse) -> None:
+        slot = self._get(context_id)
+        slot.seen += 1
+        if self.interface == "argmax":
+            assert response.argmax_id is not None
+            slot.winner = response.argmax_id
+            self.global_mass[response.argmax_id] += 1.0
+        elif self.interface == "topk":
+            assert response.topk_ids is not None and response.topk_probs is not None
+            for idx, p in zip(response.topk_ids, response.topk_probs):
+                slot.token_mass[int(idx)] = slot.token_mass.get(int(idx), 0.0) + float(p)
+                self.global_mass[int(idx)] += float(p)
+        elif self.interface == "probs":
+            assert response.probs is not None
+            vec = response.probs.astype(np.float64)
+            self.global_mass += vec
+            if slot.probs_mean is None:
+                slot.probs_mean = vec.copy()
+            else:
+                alpha = 1.0 / slot.seen
+                slot.probs_mean = (1.0 - alpha) * slot.probs_mean + alpha * vec
         else:
-            raise ValueError(f"Unknown interface: {obs.interface}")
+            raise ValueError(self.interface)
 
-    def predict_probs(self, bucket: int) -> np.ndarray:
-        row = self._row(bucket)
-        return row / row.sum()
+    def predict_dist(self, context_id: int) -> np.ndarray:
+        slot = self._get(context_id)
+        prior = self.global_mass / np.sum(self.global_mass)
+        if self.interface == "argmax":
+            dist = np.full(self.vocab_size, self.smoothing, dtype=np.float64)
+            if slot.winner is None:
+                return prior
+            dist[slot.winner] = 1.0
+            dist /= np.sum(dist)
+            return dist
+        if self.interface == "topk":
+            dist = prior * 0.25
+            if slot.token_mass:
+                total = sum(slot.token_mass.values())
+                for idx, mass in slot.token_mass.items():
+                    dist[idx] += 0.75 * (mass / total)
+            dist /= np.sum(dist)
+            return dist
+        if self.interface == "probs":
+            if slot.probs_mean is None:
+                return prior
+            dist = slot.probs_mean + self.smoothing
+            dist /= np.sum(dist)
+            return dist
+        raise ValueError(self.interface)
 
 
-def kl_divergence(p: np.ndarray, q: np.ndarray, eps: float = 1e-8) -> float:
-    p_safe = np.clip(p, eps, 1.0)
-    q_safe = np.clip(q, eps, 1.0)
-    return float(np.sum(p_safe * (np.log(p_safe) - np.log(q_safe))))
+def top1_agreement(p: np.ndarray, q: np.ndarray) -> float:
+    return float(int(np.argmax(p) == np.argmax(q)))
 
 
-def evaluate(
-    extractor: BucketedExtractor,
-    eval_items: Iterable[Tuple[int, np.ndarray]],
-) -> Tuple[float, float]:
-    agreements: List[float] = []
-    kls: List[float] = []
-    for bucket, victim_probs in eval_items:
-        student_probs = extractor.predict_probs(bucket)
-        agreements.append(float(np.argmax(student_probs) == np.argmax(victim_probs)))
-        kls.append(kl_divergence(victim_probs, student_probs))
-    return float(np.mean(agreements)), float(np.mean(kls))
+def kl_divergence(p: np.ndarray, q: np.ndarray, eps: float = 1e-12) -> float:
+    p2 = p + eps
+    q2 = q + eps
+    return float(np.sum(p2 * (np.log(p2) - np.log(q2))))
