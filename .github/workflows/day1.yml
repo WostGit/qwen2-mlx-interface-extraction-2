@@ -1,0 +1,51 @@
+name: day1-mlx-extraction
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, work ]
+
+jobs:
+  run-day1:
+    runs-on: macos-14
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Cache MLX / HF model downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/mlx
+          key: ${{ runner.os }}-mlx-hf-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-mlx-hf-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Day 1 experiments
+        env:
+          PYTHONHASHSEED: '0'
+        run: |
+          python run_all.py
+
+      - name: Upload results artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: day1-results
+          path: |
+            results/*.csv
+            results/*.png
